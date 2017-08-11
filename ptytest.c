@@ -7,9 +7,33 @@
 #include <fcntl.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#undef _POSIX_SOURCE
+#include <time.h>
 
 static
-bool get_a_pty(const char* which){
+void show_info(int fd, const char* what){
+  struct stat info;
+  if (fstat(fd, &info) != 0){
+    int error = errno;
+    fprintf(stderr,
+            "fstat for FD %d (%s) failed: %d (%s)",
+            fd, what, error, strerror(error));
+  } else{
+    printf("%s:\n", what);
+    printf(" inode: %d\n", (int) info.st_ino);
+    printf(" dev id: %d\n", (int) info.st_dev);
+    printf(" mode: %08x\n", info.st_mode);
+    printf(" links: %d\n", info.st_nlink);
+    printf(" uid: %d\n", (int) info.st_uid);
+    printf(" gid: %d\n", (int) info.st_gid);
+    printf(" created: %s", ctime(&info.st_createtime));
+  }
+}
+
+static
+bool get_a_pty(bool verbose, const char* which){
   int flags = O_RDWR | O_NOCTTY;
   int master = -1;
   if (which){
@@ -21,7 +45,7 @@ bool get_a_pty(const char* which){
       fflush(stdout);
       return false;
     } else{
-      printf("open(%s, O_RDWR | O_NOCTTY) succeeded with FD %d", master);
+      printf("open(%s, O_RDWR | O_NOCTTY) succeeded with FD %d", which, master);
     }
   } else{
     master = posix_openpt(O_RDWR | O_NOCTTY);
@@ -66,6 +90,10 @@ bool get_a_pty(const char* which){
     return false;
   }
   printf("; open(%s, O_RDWR) succeeded with FD %d\n", slaveName, slave);
+  if (verbose){
+    show_info(master, "master");
+    show_info(slave, "slave");
+  }
   fflush(stdout);
   return true;
 }
@@ -77,6 +105,7 @@ static void usage(const char* pgmName){
           "       [-g n]       get the requested number of PTYs\n"
           "       [-w]         once the requested PTY(s) are acquired, wait until killed\n"
           "       [-h]         produce this message and exit\n"
+          "       [-v]         verbose\n"
           "\n"
           , pgmName);
 }
@@ -95,10 +124,11 @@ int main(int argc, char**argv){
   bool seize = false;
   bool get = false;
   bool wait = false;
+  bool verbose = false;
   int howMany = 0;
   char name[100];
   
-  while (((char) -1) != (opt = (char) getopt(argc, argv, "s:g:wh"))){
+  while (((char) -1) != (opt = (char) getopt(argc, argv, "s:g:whv"))){
     myoptind = optind;
     myoptarg = optarg;
 
@@ -136,6 +166,10 @@ int main(int argc, char**argv){
       wait = true;
       break;
 
+    case 'v':
+      verbose = true;
+      break;
+
     default:
       {
         usage(argv[0]);
@@ -162,14 +196,14 @@ int main(int argc, char**argv){
   if (get){
     int i;
     for (i = 0; i < howMany; ++i){
-      if (!get_a_pty(0)){
+      if (!get_a_pty(verbose, 0)){
         fprintf(stderr,
                 "PTY acquisition failed after getting %d PTYs\n", i);
         return 1;
       }
     }
   } else{
-    if (!get_a_pty(name)){
+    if (!get_a_pty(verbose, name)){
         fprintf(stderr,
                 "unable to seize PTY %s\n", name);
         return 1;
